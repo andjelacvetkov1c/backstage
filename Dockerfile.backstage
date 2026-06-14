@@ -1,0 +1,49 @@
+# ---- Build stage: full install + compile ----
+FROM node:24-trixie-slim AS build
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    python3 build-essential libsqlite3-dev
+
+RUN corepack enable
+WORKDIR /app
+COPY app/ ./
+
+RUN --mount=type=cache,target=/root/.yarn/berry/cache,sharing=locked \
+    yarn install --immutable
+
+RUN yarn tsc && yarn build:backend
+
+# ---- Production stage ----
+FROM node:24-trixie-slim
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    python3 libsqlite3-dev
+
+RUN corepack enable
+WORKDIR /app
+RUN chown node:node /app
+USER node
+
+# Workspace metadata
+COPY --from=build --chown=node:node /app/.yarn ./.yarn
+COPY --from=build --chown=node:node /app/.yarnrc.yml /app/package.json /app/yarn.lock ./
+
+# Unpack skeleton (workspace package.jsons) then bundle (compiled backend)
+COPY --from=build --chown=node:node \
+    /app/packages/backend/dist/skeleton.tar.gz \
+    /app/packages/backend/dist/bundle.tar.gz ./
+RUN tar xzf skeleton.tar.gz && tar xzf bundle.tar.gz && rm skeleton.tar.gz bundle.tar.gz
+
+# Copy node_modules from build stage — skips the yarn workspaces focus step
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+
+COPY --chown=node:node app/app-config.yaml ./
+COPY --from=build --chown=node:node /app/catalog ./catalog
+
+EXPOSE 7007
+ENV NODE_ENV=production
+CMD ["node", "packages/backend", "--config", "app-config.yaml"]

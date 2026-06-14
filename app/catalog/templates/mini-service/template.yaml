@@ -1,0 +1,85 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: mini-service-template
+  title: Mini Service
+  description: Creates a containerized Node.js microservice with a GitHub Actions CI/CD pipeline
+  tags:
+    - nodejs
+    - docker
+    - github-actions
+    - recommended
+spec:
+  owner: user:development/guest
+  type: service
+
+  parameters:
+    - title: Service Details
+      required:
+        - name
+        - description
+      properties:
+        name:
+          title: Service Name
+          type: string
+          description: Unique name for the service — will also be used as the GitHub repository name
+          pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+          ui:autofocus: true
+          ui:help: 'Lowercase letters, numbers and hyphens only. Example: user-service'
+        description:
+          title: Description
+          type: string
+          description: Short description of what this service does
+        port:
+          title: Port
+          type: integer
+          default: 3000
+          description: Port the service will listen on inside the container
+
+    - title: GitHub Repository
+      required:
+        - repoUrl
+      properties:
+        repoUrl:
+          title: Repository Location
+          type: string
+          ui:field: RepoUrlPicker
+          ui:options:
+            allowedHosts:
+              - github.com
+
+  steps:
+    - id: fetch-base
+      name: Fetch Template Files
+      action: fetch:template
+      input:
+        url: ./skeleton
+        values:
+          name: ${{ parameters.name }}
+          description: ${{ parameters.description }}
+          port: ${{ parameters.port }}
+          owner: ${{ parameters.repoUrl | parseRepoUrl | pick('owner') }}
+          repo: ${{ parameters.repoUrl | parseRepoUrl | pick('repo') }}
+
+    - id: publish
+      name: Publish to GitHub
+      action: publish:github
+      input:
+        description: ${{ parameters.description }}
+        repoUrl: ${{ parameters.repoUrl }}
+        defaultBranch: main
+        repoVisibility: public
+
+    - id: register
+      name: Register in Catalog
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish'].output.repoContentsUrl }}
+        catalogInfoPath: /catalog-info.yaml
+
+  output:
+    links:
+      - title: GitHub Repository
+        url: ${{ steps['publish'].output.remoteUrl }}
+      - title: Open in Catalog
+        entityRef: ${{ steps['register'].output.entityRef }}
